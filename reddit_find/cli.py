@@ -15,7 +15,7 @@ load_dotenv(Path("C:/Users/mitch/Everything_CC/.env"), override=False)
 
 from . import __version__
 from .discover import find_subreddits
-from .fetch import fetch_post_comments, fetch_single_post, fetch_subreddit_posts
+from .fetch import fetch_post_comments, fetch_single_post, fetch_subreddit_posts, search_posts
 
 
 @click.group()
@@ -175,6 +175,73 @@ def post(post_ref: str, sub: Optional[str], output: Optional[str]):
     click.echo(f"  Fetched: \"{result['title']}\" ({len(result['comments'])} comments)", err=True)
 
     report = _build_post_markdown(result)
+
+    if output:
+        with open(output, "w", encoding="utf-8") as f:
+            f.write(report)
+        click.echo(f"Saved to: {output}", err=True)
+    else:
+        click.echo(report)
+
+
+@cli.command()
+@click.argument("query")
+@click.option("--subreddit", "-s", multiple=True, help="Scope search to specific subreddits (repeatable). Omit for global search.")
+@click.option("--min-score", default=1, show_default=True, help="Minimum post score to include (default: 1 — keyword search returns relevant low-score posts)")
+@click.option("--max-age-days", default=1825, show_default=True, help="Filter posts older than N days (default: 1825 / 5 years — search mines history)")
+@click.option("--limit", default=50, show_default=True, help="Posts to fetch per subreddit (or total for global search)")
+@click.option("--sort", default="relevance", show_default=True, type=click.Choice(["relevance", "top", "new", "comments"]), help="Reddit search sort order")
+@click.option("--titles-only", is_flag=True, default=False, help="Return titles/scores/URLs only. Fast scan — feed high-signal URLs to `reddit-find post`.")
+@click.option("--output", "-o", default=None, help="Save output to file (default: stdout)")
+def search(
+    query: str,
+    subreddit: tuple,
+    min_score: int,
+    max_age_days: int,
+    limit: int,
+    sort: str,
+    titles_only: bool,
+    output: Optional[str],
+):
+    """Search Reddit for posts matching a keyword query.
+
+    QUERY: Keyword or phrase to search for (e.g. "merchant cash advance debt")
+
+    Uses Reddit's search endpoint — finds posts across history by keyword,
+    not just current hot/top. Scoped to subreddits if -s flags given,
+    otherwise global across all of Reddit.
+
+    \b
+    Examples:
+      reddit-find search "merchant cash advance" -s smallbusiness --titles-only -o scan.md
+      reddit-find search "MCA debt" -s smallbusiness -s Entrepreneur --max-age-days 730
+      reddit-find search "cold email is dead" --sort top --limit 50 --titles-only
+    """
+    scope = f"r/{', r/'.join(subreddit)}" if subreddit else "all of Reddit"
+    click.echo(f"Searching {scope} for: {query}", err=True)
+
+    posts = search_posts(
+        query=query,
+        subreddits=list(subreddit) if subreddit else None,
+        max_age_days=max_age_days,
+        min_score=min_score,
+        limit=limit,
+        sort=sort,
+    )
+
+    if not posts:
+        click.echo("No posts found. Try broader query, lower --min-score, or higher --max-age-days.", err=True)
+        sys.exit(1)
+
+    click.echo(f"Found {len(posts)} posts.", err=True)
+
+    if titles_only:
+        report = _build_titles_markdown(query, list(subreddit) if subreddit else ["all"], posts)
+    else:
+        for post in posts:
+            sub = post.get("subreddit", "")
+            post["comments"] = fetch_post_comments(sub, post["id"]) if sub else []
+        report = _build_markdown(query, list(subreddit) if subreddit else ["all"], posts)
 
     if output:
         with open(output, "w", encoding="utf-8") as f:

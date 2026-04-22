@@ -1,11 +1,11 @@
 ---
 name: reddit-find
-description: GTM research from Reddit using a two-pass workflow. Pass 1 scans titles fast (--titles-only) to find high-signal posts. Pass 2 deep-dives specific posts with `reddit-find post <url>`. Built-in recency filter (--max-age-days) ensures fresh intel. Pre-built GTM subreddit clusters for common ICP research topics. Use when researching ICP pain, cold email hooks, buyer language, messaging validation, competitor sentiment, or voice of customer. No API key required. Gemini CLI fallback when Reddit API is blocked.
+description: GTM research from Reddit. Three commands: `search` (keyword search across Reddit history — use when researching specific pain like "MCA debt" or "cold email is dead"), `fetch` (top/hot posts from known subs — use for broad ICP landscape), `post` (deep dive single thread). Two-pass workflow: Pass 1 scan titles fast (--titles-only), Pass 2 deep-dive with `post`. Built-in recency filter. Pre-built GTM subreddit clusters. No API key required. Gemini CLI fallback when Reddit API is blocked.
 ---
 
 # reddit-find
 
-Pure data fetcher for Reddit GTM research. Two-pass workflow: scan titles fast, then deep-dive the high-signal posts. Claude in session handles analysis — no Anthropic API key required.
+Pure data fetcher for Reddit GTM research. Three commands cover the full research workflow: `search` for targeted keyword mining, `fetch` for broad subreddit scanning, `post` for deep thread dives. Claude in session handles analysis — no Anthropic API key required.
 
 ## Install
 
@@ -20,7 +20,36 @@ export SERPER_API_KEY="your_serper_key"    # serper.dev — improves subreddit d
 
 ## Commands
 
-### `fetch` — Scan or full fetch
+### `search` — Keyword search across Reddit history
+
+Use when you know the pain phrase. Hits Reddit's search endpoint — finds posts by keyword in title/body across all of history, not just current hot/top.
+
+```bash
+# Targeted EDP mining — finds posts wherever they exist historically
+reddit-find search "merchant cash advance" -s smallbusiness --titles-only -o /tmp/scan.md
+reddit-find search "MCA debt payments" -s smallbusiness -s Entrepreneur --max-age-days 730
+reddit-find search "cold email is dead" --sort top --limit 50 --titles-only
+
+# Global search (no subreddit scoping)
+reddit-find search "b2b SDR burnout" --titles-only --max-age-days 365
+```
+
+**Options:**
+```
+--subreddit / -s     Scope to specific subreddits (multiple OK). Omit for global.
+--max-age-days N     Filter posts older than N days (default: 365)
+--min-score N        Minimum upvote score (default: 5)
+--limit N            Posts to fetch per subreddit / total global (default: 25)
+--sort               relevance | top | new | comments (default: relevance)
+--titles-only        Skip comments — just titles, scores, dates, URLs
+--output / -o        Save output to file
+```
+
+**When to use search vs fetch:**
+- `search` — you have a specific pain phrase or keyword to mine ("merchant cash advance debt", "SDR quota missed"). Finds historical posts by relevance.
+- `fetch` — you want to see what's trending in a sub right now (hot + top posts). Good for broad ICP landscape.
+
+### `fetch` — Hot/top posts from known subs
 
 ```bash
 # Pass 1: titles-only scan (fast, decide what to deep-dive)
@@ -72,30 +101,41 @@ Always filter by recency. Stale pain points produce stale copy.
 
 ---
 
-## Two-Pass Workflow (Standard SOP)
+## Standard Workflow (Two-Pass + Optional Search)
 
-This is the default operating procedure for Reddit GTM research.
+### Option A: Targeted EDP mining (use `search`)
 
-### Pass 1 — Scan (fast, titles only)
+When you have a specific pain phrase — "merchant cash advance", "SDR burnout", "churn rate" — use `search` so you find posts from across Reddit's history, not just current hot.
 
 ```bash
-reddit-find fetch "<topic>" -s <sub1> -s <sub2> --titles-only --max-age-days 365 -o /tmp/scan.md
+# Pass 1 — keyword scan
+reddit-find search "<pain phrase>" -s <sub1> -s <sub2> --titles-only --max-age-days 730 -o /tmp/scan.md
+
+# Pass 2 — deep dive on selected posts
+reddit-find post <url-from-scan> -o /tmp/post-1.md
+reddit-find post <url-from-scan> -o /tmp/post-2.md
 ```
+
+### Option B: Broad ICP landscape (use `fetch`)
+
+When you want to see what's trending in a subreddit right now — no specific search term.
+
+```bash
+# Pass 1 — hot/top titles scan
+reddit-find fetch "<topic>" -s <sub1> -s <sub2> --titles-only --max-age-days 365 -o /tmp/scan.md
+
+# Pass 2 — deep dive on selected posts
+reddit-find post <url-from-scan> -o /tmp/post-1.md
+reddit-find post <url-from-scan> -o /tmp/post-2.md
+```
+
+### Scoring guide (Pass 1)
 
 Read the scan output. Score each post:
 - **HIGH**: >200 pts OR >50 comments AND title signals buyer pain/frustration/comparison/venting
 - **SKIP**: memes, humor posts, off-topic, <20 pts, obvious jokes
 
-### Pass 2 — Deep dive (selected posts only)
-
-```bash
-reddit-find post <url-from-scan> -o /tmp/post-1.md
-reddit-find post <url-from-scan> -o /tmp/post-2.md
-```
-
-Read the full thread and extract GTM intel (see "Claude's job" below).
-
-**Why two passes:** Comment fetching is slow (2s sleep per post, rate limit protection). On a 5-sub scan with 8 threads each, fetching comments on all 40 posts takes 80+ seconds. Titles scan takes 5-10 seconds. Read first, fetch deep only what matters.
+**Why two passes:** Comment fetching is slow (2s sleep per post). On a 5-sub scan with 8 threads each, fetching all comments takes 80+ seconds. Titles scan takes 5-10 seconds. Read first, fetch deep only what matters.
 
 ---
 
@@ -141,29 +181,43 @@ After reading the output from `fetch` (full) or `post`:
 
 | Situation | Command |
 |-----------|---------|
-| New ICP — find pain and buyer language | Pass 1 scan then Pass 2 deep dive |
-| Cold email hooks for a specific market | `fetch "<ICP problem>" -s <sub> --titles-only` then `post` on top hits |
+| You have a specific pain phrase to mine | `search "<phrase>" -s <sub> --titles-only` then `post` |
+| New ICP — find pain and buyer language | `search "<ICP problem>" -s <sub> --titles-only` then `post` |
+| Broad ICP landscape / what's trending | `fetch "<topic>" -s <sub> --titles-only` then `post` |
+| Cold email hooks for a specific market | `search "<ICP problem>" --sort top --titles-only` then `post` |
 | Content batch for a new topic | `fetch "<topic>" -s <sub> --titles-only` then `post` high-signal |
-| Researching a competitor | `fetch "<competitor name>" -s <relevant_sub>` |
-| Validating a new offer angle | `fetch "<offer premise>" -o /tmp/validation.md` |
-| Voice of market for playbook research | Full fetch, 3-5 subs, `--max-age-days 365` |
+| Researching a competitor | `search "<competitor name>" -s <relevant_sub>` |
+| Validating a new offer angle | `search "<offer premise>" --titles-only` |
+| Voice of market for playbook research | Full `fetch`, 3-5 subs, `--max-age-days 365` |
 
 ---
 
-## Example: Full Two-Pass Research Session
+## Example: Targeted EDP Mining (search-first)
 
 ```bash
-# Pass 1 — scan titles across core GTM subs
-reddit-find fetch "b2b cold email" -s sales -s b2bmarketing -s sdr \
-  --titles-only --max-age-days 365 -o /tmp/scan.md
+# Pass 1 — keyword scan for specific pain phrase
+reddit-find search "merchant cash advance" -s smallbusiness -s Entrepreneur \
+  --titles-only --max-age-days 730 -o /tmp/scan.md
 
 # Claude reads scan.md, marks HIGH-signal posts
 
 # Pass 2 — deep dive on 2-3 selected posts
-reddit-find post https://reddit.com/r/sales/comments/1abc23/ -o /tmp/post-1.md
-reddit-find post https://reddit.com/r/sales/comments/1xyz99/ -o /tmp/post-2.md
+reddit-find post https://reddit.com/r/smallbusiness/comments/1abc23/ -o /tmp/post-1.md
+reddit-find post https://reddit.com/r/Entrepreneur/comments/1xyz99/ -o /tmp/post-2.md
 
 # Claude reads post-1.md and post-2.md and extracts full GTM intel
+```
+
+## Example: Broad ICP Landscape (fetch-first)
+
+```bash
+# Pass 1 — scan hot/top across core GTM subs
+reddit-find fetch "b2b cold email" -s sales -s b2bmarketing -s sdr \
+  --titles-only --max-age-days 365 -o /tmp/scan.md
+
+# Pass 2 — deep dive on 2-3 selected posts
+reddit-find post https://reddit.com/r/sales/comments/1abc23/ -o /tmp/post-1.md
+reddit-find post https://reddit.com/r/sales/comments/1xyz99/ -o /tmp/post-2.md
 ```
 
 ---

@@ -159,6 +159,95 @@ def fetch_single_post(post_url_or_id: str, subreddit: Optional[str] = None) -> O
     return post
 
 
+def search_posts(
+    query: str,
+    subreddits: Optional[List[str]] = None,
+    max_age_days: Optional[int] = 365,
+    min_score: int = 5,
+    limit: int = 25,
+    sort: str = "relevance",
+) -> List[Dict]:
+    """Search Reddit for posts matching a keyword query.
+
+    Uses Reddit's search.json endpoint — finds posts by keyword anywhere in
+    title/body, not just hot/top posts. Scoped to subreddits if provided,
+    otherwise global search.
+
+    sort: relevance | top | new | comments
+    """
+    now_ts = datetime.now(timezone.utc).timestamp()
+    cutoff_ts = (now_ts - max_age_days * 86400) if max_age_days is not None else None
+
+    all_posts: List[Dict] = []
+
+    if subreddits:
+        for sub in subreddits:
+            url = f"{BASE_URL}/r/{sub}/search.json"
+            params = {
+                "q": query,
+                "restrict_sr": "on",
+                "sort": sort,
+                "t": "all",
+                "limit": limit,
+            }
+            data = _get(url, params)
+            if not data:
+                continue
+            all_posts.extend(_parse_search_results(data, cutoff_ts, min_score))
+    else:
+        url = f"{BASE_URL}/search.json"
+        params = {
+            "q": query,
+            "type": "link",
+            "sort": sort,
+            "t": "all",
+            "limit": limit,
+        }
+        data = _get(url, params)
+        if data:
+            all_posts.extend(_parse_search_results(data, cutoff_ts, min_score))
+
+    # Deduplicate by post ID
+    seen: set = set()
+    deduped = []
+    for p in all_posts:
+        if p["id"] not in seen:
+            seen.add(p["id"])
+            deduped.append(p)
+
+    return sorted(deduped, key=lambda x: x["score"], reverse=True)
+
+
+def _parse_search_results(data: Dict, cutoff_ts: Optional[float], min_score: int) -> List[Dict]:
+    posts = []
+    for child in data.get("data", {}).get("children", []):
+        p = child.get("data", {})
+        created_utc = p.get("created_utc", 0)
+        score = p.get("score", 0)
+
+        if cutoff_ts is not None and created_utc < cutoff_ts:
+            continue
+        if score < min_score:
+            continue
+
+        posts.append(
+            {
+                "id": p.get("id", ""),
+                "title": p.get("title", ""),
+                "score": score,
+                "upvote_ratio": p.get("upvote_ratio", 0),
+                "num_comments": p.get("num_comments", 0),
+                "author": p.get("author", "[deleted]"),
+                "url": f"https://reddit.com{p.get('permalink', '')}",
+                "selftext": (p.get("selftext") or "")[:600],
+                "subreddit": p.get("subreddit", ""),
+                "created_utc": created_utc,
+                "flair": p.get("link_flair_text") or "",
+            }
+        )
+    return posts
+
+
 def _parse_post_ref(ref: str, subreddit: Optional[str] = None):
     """Extract (subreddit, post_id) from a URL or bare ID."""
     # Full URL: https://reddit.com/r/sales/comments/abc123/title_here/
