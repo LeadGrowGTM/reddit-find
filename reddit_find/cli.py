@@ -1,4 +1,4 @@
-"""reddit-find CLI — GTM research from Reddit communities."""
+"""reddit-find CLI - GTM research from Reddit communities."""
 
 import sys
 from datetime import datetime
@@ -15,7 +15,7 @@ from .fetch import fetch_post_comments, fetch_subreddit_posts
 @click.group()
 @click.version_option(version=__version__)
 def cli():
-    """reddit-find — surface GTM intel from Reddit communities.
+    """reddit-find - surface GTM intel from Reddit communities.
 
     Discovers relevant subreddits, fetches top threads, and extracts
     pain points, buyer language, viral moments, and content angles.
@@ -41,7 +41,7 @@ def discover(topic: str, serper_key: str, top: int):
 
     click.echo(f"Top subreddits for '{topic}':\n")
     for i, s in enumerate(subreddits, 1):
-        bar = "█" * s["relevance_score"]
+        bar = "#" * s["relevance_score"]
         click.echo(f"  {i:2}. r/{s['subreddit']:<30} {bar} ({s['relevance_score']})")
 
     click.echo(f"\nRun the full pipeline:")
@@ -70,7 +70,7 @@ def fetch(
     output: Optional[str],
     model: str,
 ):
-    """Run full GTM research pipeline: discover → fetch → analyze.
+    """Run full GTM research pipeline: discover -> fetch -> analyze.
 
     TOPIC: What you're researching (e.g. "b2b pipeline generation")
 
@@ -152,12 +152,12 @@ def _build_report(topic: str, subreddits: List[str], threads: List[dict], analys
     subs_str = ", ".join(f"r/{s}" for s in subreddits)
     date_str = datetime.now().strftime("%Y-%m-%d")
     thread_list = "\n".join(
-        f"- [{t['score']} pts] [{t['title']}]({t['url']}) — r/{t['subreddit']}"
+        f"- [{t['score']} pts] [{t['title']}]({t['url']}) - r/{t['subreddit']}"
         for t in sorted(threads, key=lambda x: x["score"], reverse=True)[:15]
     )
 
     return f"""---
-title: Reddit GTM Research — {topic}
+title: Reddit GTM Research - {topic}
 subreddits: {subs_str}
 threads_analyzed: {len(threads)}
 generated: {date_str}
