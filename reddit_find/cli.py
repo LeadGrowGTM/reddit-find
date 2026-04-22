@@ -1,13 +1,19 @@
-"""reddit-find CLI - GTM research from Reddit communities."""
+"""reddit-find CLI - pure data fetcher for Reddit GTM research."""
 
+import os
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 
 import click
+from dotenv import load_dotenv
+
+# Load SERPER_API_KEY from workspace .env if present (optional)
+load_dotenv(Path(__file__).parents[2] / ".env", override=False)
+load_dotenv(Path("C:/Users/mitch/Everything_CC/.env"), override=False)
 
 from . import __version__
-from .analyze import analyze_threads
 from .discover import find_subreddits
 from .fetch import fetch_post_comments, fetch_subreddit_posts
 
@@ -15,25 +21,28 @@ from .fetch import fetch_post_comments, fetch_subreddit_posts
 @click.group()
 @click.version_option(version=__version__)
 def cli():
-    """reddit-find - surface GTM intel from Reddit communities.
+    """reddit-find - fetch Reddit data for GTM research.
 
-    Discovers relevant subreddits, fetches top threads, and extracts
-    pain points, buyer language, viral moments, and content angles.
+    Discovers relevant subreddits and fetches top threads + comments as
+    structured markdown. No API key required. Claude in session handles analysis.
     """
     pass
 
 
 @cli.command()
 @click.argument("topic")
-@click.option("--serper-key", envvar="SERPER_API_KEY", required=True, help="SerperDev API key (serper.dev)")
+@click.option("--serper-key", envvar="SERPER_API_KEY", default=None, help="SerperDev API key (optional, improves discovery)")
 @click.option("--top", default=8, show_default=True, help="Number of subreddits to return")
-def discover(topic: str, serper_key: str, top: int):
+def discover(topic: str, serper_key: Optional[str], top: int):
     """Find relevant subreddits for a GTM topic.
 
     TOPIC: The topic or ICP problem to research (e.g. "b2b cold email")
+
+    Uses Reddit's native subreddit search by default. Pass SERPER_API_KEY
+    for enhanced discovery via Google.
     """
     click.echo(f"Searching for subreddits: {topic}\n")
-    subreddits = find_subreddits(topic, serper_key, num_results=top)
+    subreddits = find_subreddits(topic, serper_api_key=serper_key, num_results=top)
 
     if not subreddits:
         click.echo("No subreddits found. Try a broader topic.", err=True)
@@ -41,8 +50,9 @@ def discover(topic: str, serper_key: str, top: int):
 
     click.echo(f"Top subreddits for '{topic}':\n")
     for i, s in enumerate(subreddits, 1):
-        bar = "#" * s["relevance_score"]
-        click.echo(f"  {i:2}. r/{s['subreddit']:<30} {bar} ({s['relevance_score']})")
+        subs_str = f"{s['subscribers']:,}" if s["subscribers"] else "?"
+        desc = s.get("description", "")[:60]
+        click.echo(f"  {i:2}. r/{s['subreddit']:<30} {subs_str:>10} subscribers  {desc}")
 
     click.echo(f"\nRun the full pipeline:")
     subs_flags = " ".join(f"-s {s['subreddit']}" for s in subreddits[:5])
@@ -51,59 +61,53 @@ def discover(topic: str, serper_key: str, top: int):
 
 @cli.command()
 @click.argument("topic")
-@click.option("--serper-key", envvar="SERPER_API_KEY", default=None, help="SerperDev API key (required unless -s is used)")
-@click.option("--anthropic-key", envvar="ANTHROPIC_API_KEY", required=True, help="Anthropic API key")
+@click.option("--serper-key", envvar="SERPER_API_KEY", default=None, help="SerperDev API key (optional, improves subreddit discovery)")
 @click.option("--subreddit", "-s", multiple=True, help="Target specific subreddits (skips discovery)")
 @click.option("--posts-per-sub", default=20, show_default=True, help="Posts to fetch per subreddit")
 @click.option("--min-score", default=5, show_default=True, help="Minimum post score to include")
-@click.option("--top-threads", default=8, show_default=True, help="Top threads to analyze per subreddit")
-@click.option("--output", "-o", default=None, help="Save report to file (default: stdout)")
-@click.option("--model", default="claude-haiku-4-5-20251001", show_default=True, help="Claude model for analysis")
+@click.option("--top-threads", default=8, show_default=True, help="Top threads to fetch per subreddit")
+@click.option("--output", "-o", default=None, help="Save output to file (default: stdout)")
 def fetch(
     topic: str,
     serper_key: Optional[str],
-    anthropic_key: str,
     subreddit: tuple,
     posts_per_sub: int,
     min_score: int,
     top_threads: int,
     output: Optional[str],
-    model: str,
 ):
-    """Run full GTM research pipeline: discover -> fetch -> analyze.
+    """Fetch Reddit threads and output structured markdown for analysis.
 
     TOPIC: What you're researching (e.g. "b2b pipeline generation")
 
+    No API key required. Output is structured markdown — Claude reads it
+    and extracts pain points, buyer language, viral moments, and content angles.
+
     \b
     Examples:
-      reddit-find fetch "cold email pain points" -o research.md
-      reddit-find fetch "SaaS churn" -s churnzero -s CustomerSuccess -o churn.md
+      reddit-find fetch "b2b cold email" -s sales --min-score 20 -o research.md
+      reddit-find fetch "SaaS churn" -s CustomerSuccess -s churnzero -o churn.md
     """
     # Step 1: Determine subreddits
     if subreddit:
         target_subs = list(subreddit)
-        click.echo(f"Targeting: {', '.join(f'r/{s}' for s in target_subs)}\n")
+        click.echo(f"Targeting: {', '.join(f'r/{s}' for s in target_subs)}\n", err=True)
     else:
-        if not serper_key:
-            click.echo(
-                "Error: --serper-key (or SERPER_API_KEY) required for subreddit discovery.\n"
-                "Alternatively, pass subreddits directly with -s <subreddit>",
-                err=True,
-            )
-            sys.exit(1)
-        click.echo(f"Discovering subreddits for: {topic}...")
-        discovered = find_subreddits(topic, serper_key)
+        method = "Reddit native search"
+        if serper_key:
+            method = "Reddit native search + SerperDev"
+        click.echo(f"Discovering subreddits for: {topic} ({method})...", err=True)
+        discovered = find_subreddits(topic, serper_api_key=serper_key)
         if not discovered:
             click.echo("No subreddits found. Try passing -s <subreddit> directly.", err=True)
             sys.exit(1)
         target_subs = [s["subreddit"] for s in discovered[:5]]
-        click.echo(f"Targeting: {', '.join(f'r/{s}' for s in target_subs)}\n")
+        click.echo(f"Targeting: {', '.join(f'r/{s}' for s in target_subs)}\n", err=True)
 
     # Step 2: Fetch posts + comments
     all_threads = []
     for sub in target_subs:
-        click.echo(f"Fetching r/{sub}...")
-        posts = []
+        click.echo(f"Fetching r/{sub}...", err=True)
 
         hot = fetch_subreddit_posts(sub, sort="hot", limit=posts_per_sub)
         top = fetch_subreddit_posts(sub, sort="top", limit=posts_per_sub, time_filter="month")
@@ -111,7 +115,7 @@ def fetch(
         posts = [p for p in posts if p["score"] >= min_score]
         posts = sorted(posts, key=lambda x: x["score"], reverse=True)[:top_threads]
 
-        click.echo(f"  {len(posts)} threads (fetching comments...)")
+        click.echo(f"  {len(posts)} threads (fetching comments...)", err=True)
         for post in posts:
             post["comments"] = fetch_post_comments(sub, post["id"]) or []
 
@@ -121,20 +125,16 @@ def fetch(
         click.echo("No threads fetched. Check subreddit names or lower --min-score.", err=True)
         sys.exit(1)
 
-    click.echo(f"\nAnalyzing {len(all_threads)} threads with Claude ({model})...")
+    click.echo(f"\nFetched {len(all_threads)} threads. Building markdown...\n", err=True)
 
-    # Step 3: Analyze
-    analysis = analyze_threads(all_threads, topic, target_subs, anthropic_key, model=model)
-
-    # Step 4: Build + output report
-    report = _build_report(topic, target_subs, all_threads, analysis)
+    # Step 3: Build structured markdown (no analysis — Claude handles that)
+    report = _build_markdown(topic, target_subs, all_threads)
 
     if output:
         with open(output, "w", encoding="utf-8") as f:
             f.write(report)
-        click.echo(f"\nReport saved: {output}")
+        click.echo(f"Saved to: {output}", err=True)
     else:
-        click.echo("\n" + "=" * 60 + "\n")
         click.echo(report)
 
 
@@ -148,38 +148,43 @@ def _dedupe(posts: List[dict]) -> List[dict]:
     return out
 
 
-def _build_report(topic: str, subreddits: List[str], threads: List[dict], analysis: str) -> str:
+def _build_markdown(topic: str, subreddits: List[str], threads: List[dict]) -> str:
     subs_str = ", ".join(f"r/{s}" for s in subreddits)
     date_str = datetime.now().strftime("%Y-%m-%d")
-    thread_list = "\n".join(
-        f"- [{t['score']} pts] [{t['title']}]({t['url']}) - r/{t['subreddit']}"
-        for t in sorted(threads, key=lambda x: x["score"], reverse=True)[:15]
-    )
 
-    return f"""---
-title: Reddit GTM Research - {topic}
-subreddits: {subs_str}
-threads_analyzed: {len(threads)}
-generated: {date_str}
-tool: reddit-find (github.com/LeadGrowGTM/reddit-find)
----
+    sections = [
+        f"# Reddit Research: {topic}",
+        f"Subreddits: {subs_str}",
+        f"Fetched: {date_str}",
+        f"Threads: {len(threads)}",
+        "",
+        "---",
+        "",
+    ]
 
-# Reddit GTM Research: {topic}
+    sorted_threads = sorted(threads, key=lambda x: x["score"], reverse=True)
 
-**Subreddits:** {subs_str}
-**Threads analyzed:** {len(threads)}
-**Generated:** {date_str}
+    for t in sorted_threads:
+        header = f"## [{t['score']} pts] \"{t['title']}\""
+        meta = f"r/{t['subreddit']} | {t['num_comments']} comments | {t['url']}"
 
----
+        block = [header, meta]
 
-{analysis}
+        selftext = (t.get("selftext") or "").strip()
+        if selftext:
+            block.append(f"\nPost: {selftext}")
 
----
+        comments = t.get("comments", [])
+        if comments:
+            block.append("\nTop comments:")
+            for c in comments[:8]:
+                block.append(f"- [{c['score']} pts] u/{c['author']}: {c['body']}")
 
-## Source Threads
+        block.append("\n---")
+        sections.append("\n".join(block))
+        sections.append("")
 
-{thread_list}
-"""
+    return "\n".join(sections)
 
 
 def main():

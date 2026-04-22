@@ -18,8 +18,8 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dependencies = [
-    "anthropic>=0.40.0",
     "click>=8.0",
+    "python-dotenv>=1.0",
     "requests>=2.28",
 ]
 
