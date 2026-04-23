@@ -31,39 +31,71 @@ export SERPER_API_KEY="your_key"   # serper.dev, 2,500 free searches/month
 ## Quick Start
 
 ```bash
-# Full pipeline: discover subs, fetch threads, output markdown
-reddit-find fetch "b2b cold email" -s sales --min-score 20 -o research.md
+# Targeted: keyword search across Reddit history (specific pain phrase)
+reddit-find search "merchant cash advance debt" -s smallbusiness --titles-only -o scan.md
 
-# Fast scan: titles only (decide what to deep-dive)
-reddit-find fetch "SaaS churn" -s CustomerSuccess --titles-only -o scan.md
+# Broad: hot/top posts from known subs (landscape scan)
+reddit-find fetch "b2b cold email" -s sales --titles-only -o scan.md
 
-# Deep-dive a specific post
+# Deep-dive a specific post + all comments
 reddit-find post https://reddit.com/r/sales/comments/1abc23/title/ -o post.md
 ```
 
-## Two-Pass Workflow
+## Research Workflow
 
-The standard operating procedure for Reddit GTM research. Titles scan takes 5-10 seconds. Full comment fetching on 40 posts takes 80+ seconds. Read first, fetch deep only what matters.
+Three commands, three distinct data surfaces. The standard flow: **find threads → eval titles → deep dive winners**.
 
-### Pass 1: Scan titles (fast)
+```
+search or fetch  →  eval titles (Claude scores HIGH/SKIP)  →  post (full thread + comments)
+```
+
+Titles scan: 5-10 seconds. Full comment fetch on 40 posts: 80+ seconds. Scan first, pay the rate limit only on posts worth reading.
+
+---
+
+### Step 1: Find threads
+
+**Use `search` when you have a specific pain phrase** — finds posts by keyword across Reddit's full history, not just what's trending today.
+
+```bash
+# Scoped to subreddits
+reddit-find search "merchant cash advance" -s smallbusiness -s Entrepreneur \
+  --titles-only -o scan.md
+
+# Global search (all of Reddit)
+reddit-find search "SDR quota attainment" --titles-only --sort top -o scan.md
+```
+
+**Use `fetch` when you want the current landscape** — pulls hot + top posts from subreddits. Good for "what's the ICP talking about right now."
 
 ```bash
 reddit-find fetch "pipeline generation" -s sales -s b2bmarketing -s SaaS \
   --titles-only --max-age-days 365 -o scan.md
 ```
 
-Score each post:
-- **HIGH**: >200 pts OR >50 comments AND title signals buyer pain/frustration/comparison
-- **SKIP**: memes, off-topic, <20 pts, humor posts
+---
 
-### Pass 2: Deep-dive selected posts
+### Step 2: Eval titles
+
+Read the scan output. Score each row:
+
+- **HIGH**: title signals buyer pain/frustration/comparison/venting AND (score >50 OR comments >30)
+- **SKIP**: memes, off-topic, humor posts, obvious self-promotion
+
+The comments column is often more predictive than score — a 3-upvote post with 80 comments is a dogpile of shared pain.
+
+---
+
+### Step 3: Deep-dive selected posts
 
 ```bash
 reddit-find post https://reddit.com/r/sales/comments/1abc23/ -o post-1.md
 reddit-find post https://reddit.com/r/sales/comments/1xyz99/ -o post-2.md
 ```
 
-Feed the markdown to Claude, ChatGPT, or any AI for structured extraction.
+Returns full post body + up to 50 comments ranked by upvotes. This is where the best EDP language lives — OP writes 3 sentences, comments are 40 people describing the same pain in their own words.
+
+Feed the output to Claude, ChatGPT, or any AI for extraction.
 
 ## GTM Use Cases
 
@@ -72,7 +104,8 @@ Feed the markdown to Claude, ChatGPT, or any AI for structured extraction.
 Find the exact words prospects use to describe their problem. These become subject lines and opening lines that feel like mind-reading.
 
 ```bash
-reddit-find fetch "outbound is broken" -s sales -s sdr --titles-only --max-age-days 90 -o scan.md
+# Keyword-targeted: search across history for specific pain language
+reddit-find search "outbound is dead" -s sales -s sdr --titles-only -o scan.md
 # Deep-dive high-signal posts, then extract:
 # - Pain phrases for subject lines
 # - Objections to preempt in email body
@@ -97,8 +130,8 @@ Your AI extracts: specific pain points ranked by engagement, the job titles post
 What do real users say about your competitors when they're not on a sales call?
 
 ```bash
-reddit-find fetch "Clay vs Apollo" -s sales -s b2bmarketing -o competitor.md
-reddit-find fetch "[competitor name] complaints" -s relevant_sub -o complaints.md
+reddit-find search "Clay vs Apollo" -s sales -s b2bmarketing --titles-only -o scan.md
+reddit-find search "[competitor name] problems" -s relevant_sub --titles-only -o scan.md
 ```
 
 Surfaces: feature gaps users actually care about, pricing objections, switching triggers, and the exact moment someone decides to look for alternatives.
@@ -118,7 +151,7 @@ Threads with 200+ upvotes = validated content angles. Your AI turns each high-si
 Before you build a new offer, check if the market actually wants it.
 
 ```bash
-reddit-find fetch "fractional CMO" -s marketing -s startups -s Entrepreneur -o validation.md
+reddit-find search "fractional CMO" -s marketing -s startups -s Entrepreneur --titles-only -o scan.md
 ```
 
 If the threads are full of "I wish someone would just..." or "why doesn't anyone offer..." - you've got signal. If it's crickets or negative sentiment, you just saved months of building the wrong thing.
@@ -168,24 +201,40 @@ Skip discovery for common GTM research. Copy-paste the right subs for your topic
 
 ## Commands Reference
 
-### `reddit-find fetch [OPTIONS] TOPIC`
+### `reddit-find search [OPTIONS] QUERY`
 
-Fetch threads from Reddit. Auto-discovers subreddits or targets specific ones.
+Search Reddit by keyword. Hits Reddit's search index — finds posts across history by relevance, not just current hot/top. Defaults tuned for EDP mining.
 
 ```
+  QUERY                    Keyword or phrase to search for
+  -s, --subreddit TEXT     Scope to subreddit (repeatable). Omit for global.
+  --titles-only            Skip comments - titles, scores, dates, URLs only
+  --max-age-days INT       Filter posts older than N days (default: 1825 / 5yr)
+  --min-score INT          Min upvote score (default: 1)
+  --limit INT              Posts per subreddit or total global (default: 50)
+  --sort TEXT              relevance | top | new | comments (default: relevance)
+  -o, --output TEXT        Save output to file (default: stdout)
+```
+
+### `reddit-find fetch [OPTIONS] TOPIC`
+
+Fetch hot + top threads from subreddits. Auto-discovers subs or targets specific ones.
+
+```
+  TOPIC                    What you're researching
   -s, --subreddit TEXT     Target subreddit (repeatable, skips discovery)
   --titles-only            Skip comments - titles, scores, dates, URLs only
   --max-age-days INT       Filter posts older than N days (default: 365)
   --min-score INT          Min upvote score (default: 5)
   --top-threads INT        Top threads per sub (default: 8)
   --posts-per-sub INT      Posts to fetch per sub (default: 20)
-  --serper-key TEXT         SerperDev API key (env: SERPER_API_KEY)
+  --serper-key TEXT        SerperDev API key (env: SERPER_API_KEY)
   -o, --output TEXT        Save output to file (default: stdout)
 ```
 
 ### `reddit-find post [OPTIONS] POST_REF`
 
-Fetch a single post + all comments (up to 50) for deep analysis.
+Fetch a single post + all comments (up to 50). Use after eval step to deep-dive high-signal threads.
 
 ```
   POST_REF                 Full Reddit URL or bare post ID
@@ -249,10 +298,11 @@ This installs the skill into your `.claude/skills/` directory. Claude Code will 
 
 ## How It Works
 
-1. **Discover** - Reddit native subreddit search finds relevant communities. SerperDev (optional) adds Google-sourced signals for better coverage.
-2. **Fetch** - Reddit JSON API pulls hot + top posts and their best comments. No auth required, no API key needed.
-3. **Filter** - Recency filtering (`--max-age-days`), score thresholds (`--min-score`), and thread limits keep output focused.
-4. **Output** - Structured markdown ready for any AI to read and analyze. Claude, ChatGPT, Gemini, local models - all work.
+1. **Find** - `search` hits Reddit's search index to find posts by keyword across history. `fetch` pulls current hot + top posts from subreddits. `discover` finds the right subreddits when you don't know where to look.
+2. **Filter** - Recency filtering (`--max-age-days`), score thresholds (`--min-score`), and thread limits keep output focused.
+3. **Eval** - `--titles-only` gives you a fast table of post titles, scores, comment counts, and URLs. Scan it, pick the winners.
+4. **Deep dive** - `post` fetches the full thread: post body + up to 50 comments ranked by upvotes. That's where the real EDP language is.
+5. **Output** - Structured markdown ready for any AI. Claude, ChatGPT, Gemini, local models — all work.
 
 ## Recency Guidance
 
