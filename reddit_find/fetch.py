@@ -7,10 +7,29 @@ from typing import Dict, List, Optional
 
 import requests
 
+from .errors import RedditBlockedError
+
 HEADERS = {
     "User-Agent": "reddit-find/1.0 GTM research tool (github.com/LeadGrowGTM/reddit-find)"
 }
 BASE_URL = "https://old.reddit.com"
+
+# Markers seen on Reddit's WAF block page. Matched case-insensitively against
+# the response body. Kept apostrophe-free so HTML entity encoding can't dodge it.
+_BLOCK_MARKERS = ("blocked by network security", "<title>blocked</title>")
+
+
+def _raise_if_blocked(resp) -> None:
+    """Raise RedditBlockedError if the response is a 403 or a WAF block page."""
+    blocked = resp.status_code == 403
+    if not blocked:
+        body = (resp.text or "").lower()
+        blocked = any(marker in body for marker in _BLOCK_MARKERS)
+    if blocked:
+        raise RedditBlockedError(
+            "Reddit has blocked this IP (rate-limit/WAF). Wait it out, switch "
+            "networks/VPN, or use the RapidAPI fallback (separate feature)."
+        )
 
 
 def fetch_subreddit_posts(
@@ -265,6 +284,7 @@ def _parse_post_ref(ref: str, subreddit: Optional[str] = None):
 def _get(url: str, params: Dict, array_response: bool = False, retry: bool = True):
     try:
         resp = requests.get(url, headers=HEADERS, params=params, timeout=15)
+        _raise_if_blocked(resp)
         if resp.status_code == 429:
             if retry:
                 time.sleep(15)
@@ -272,5 +292,7 @@ def _get(url: str, params: Dict, array_response: bool = False, retry: bool = Tru
             return None
         resp.raise_for_status()
         return resp.json()
+    except RedditBlockedError:
+        raise
     except Exception:
         return None
