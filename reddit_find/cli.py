@@ -15,10 +15,30 @@ load_dotenv(Path("C:/Users/mitch/Everything_CC/.env"), override=False)
 
 from . import __version__
 from .discover import find_subreddits
+from .errors import RedditBlockedError, RedditRateLimitError
 from .fetch import fetch_post_comments, fetch_single_post, fetch_subreddit_posts, search_posts
 
 
-@click.group()
+class GuardrailGroup(click.Group):
+    """Surfaces block / rate-limit failures distinctly instead of as a traceback.
+
+    A genuine empty result still flows through each command's own
+    ``sys.exit(1)`` path, so an IP block (exit 2) and a rate limit (exit 3)
+    are visibly different from "no results found".
+    """
+
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except RedditBlockedError as e:
+            click.echo(f"\nIP BLOCKED: {e}", err=True)
+            ctx.exit(2)
+        except RedditRateLimitError as e:
+            click.echo(f"\nRATE LIMITED: {e}", err=True)
+            ctx.exit(3)
+
+
+@click.group(cls=GuardrailGroup)
 @click.version_option(version=__version__)
 def cli():
     """reddit-find - fetch Reddit data for GTM research.
