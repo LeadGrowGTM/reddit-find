@@ -1,5 +1,6 @@
 """Reddit JSON API fetching — posts and comments, no auth required."""
 
+import random
 import re
 import time
 from datetime import datetime, timezone
@@ -7,7 +8,7 @@ from typing import Dict, List, Optional
 
 import requests
 
-from .errors import RedditBlockedError
+from .errors import RedditBlockedError, RedditRateLimitError
 
 HEADERS = {
     "User-Agent": "reddit-find/1.0 GTM research tool (github.com/LeadGrowGTM/reddit-find)"
@@ -281,18 +282,33 @@ def _parse_post_ref(ref: str, subreddit: Optional[str] = None):
     return subreddit, None
 
 
-def _get(url: str, params: Dict, array_response: bool = False, retry: bool = True):
+_BACKOFF_SCHEDULE = (5, 15, 45)  # seconds before each successive 429 retry
+
+
+def _jittered(seconds: float) -> float:
+    """Apply ±20% random jitter so retries don't hit Reddit metronomically."""
+    return seconds * random.uniform(0.8, 1.2)
+
+
+def _get(url: str, params: Dict, array_response: bool = False, max_retries: int = 3):
+    attempt = 0
     try:
-        resp = requests.get(url, headers=HEADERS, params=params, timeout=15)
-        _raise_if_blocked(resp)
-        if resp.status_code == 429:
-            if retry:
-                time.sleep(15)
-                return _get(url, params, array_response, retry=False)
-            return None
-        resp.raise_for_status()
-        return resp.json()
-    except RedditBlockedError:
+        while True:
+            resp = requests.get(url, headers=HEADERS, params=params, timeout=15)
+            _raise_if_blocked(resp)
+            if resp.status_code == 429:
+                if attempt >= max_retries:
+                    raise RedditRateLimitError(
+                        f"Reddit rate-limited this IP (HTTP 429) after {max_retries} "
+                        "backoff retries. Slow down (--max-per-minute) or wait before retrying."
+                    )
+                base = _BACKOFF_SCHEDULE[min(attempt, len(_BACKOFF_SCHEDULE) - 1)]
+                time.sleep(_jittered(base))
+                attempt += 1
+                continue
+            resp.raise_for_status()
+            return resp.json()
+    except (RedditBlockedError, RedditRateLimitError):
         raise
     except Exception:
         return None

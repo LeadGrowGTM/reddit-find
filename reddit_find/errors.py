@@ -8,3 +8,7 @@ rendered as "0 posts".
 
 class RedditBlockedError(RuntimeError):
     """Raised when Reddit's WAF has blocked this IP (HTTP 403 or block page)."""
+
+
+class RedditRateLimitError(RuntimeError):
+    """Raised when 429s persist after exhausting backoff retries."""
