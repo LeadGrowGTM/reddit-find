@@ -39,3 +39,18 @@ class RateLimiter:
             wait = self._next_available - now
             self._next_available += self._interval
         time.sleep(wait)
+
+
+_shared_limiter: Optional[RateLimiter] = None
+
+
+def get_limiter() -> RateLimiter:
+    """Return the process-wide shared limiter, creating it on first use.
+
+    A single instance is shared across the fetch and discover paths so every
+    reddit.com request draws from one budget.
+    """
+    global _shared_limiter
+    if _shared_limiter is None:
+        _shared_limiter = RateLimiter()
+    return _shared_limiter

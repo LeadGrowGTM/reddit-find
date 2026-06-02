@@ -20,9 +20,9 @@ def _resp(status=200, json_data=None):
 def test_429_then_200_retries_once_and_succeeds():
     """A transient 429 backs off once, then the 200 succeeds."""
     seq = [_resp(status=429), _resp(status=200, json_data={"data": {"ok": True}})]
-    with patch.object(fetch.requests, "get", side_effect=seq), patch.object(
-        fetch.time, "sleep"
-    ) as sleep:
+    with patch.object(fetch, "get_limiter", return_value=Mock()), patch.object(
+        fetch.requests, "get", side_effect=seq
+    ), patch.object(fetch.time, "sleep") as sleep:
         result = fetch._get("https://old.reddit.com/r/x/hot.json", {})
 
     assert result == {"data": {"ok": True}}
@@ -33,9 +33,9 @@ def test_429_then_200_retries_once_and_succeeds():
 
 def test_persistent_429_raises_after_backoffs():
     """Unrelenting 429s exhaust retries and raise a typed error — never None."""
-    with patch.object(fetch.requests, "get", return_value=_resp(status=429)), patch.object(
-        fetch.time, "sleep"
-    ) as sleep:
+    with patch.object(fetch, "get_limiter", return_value=Mock()), patch.object(
+        fetch.requests, "get", return_value=_resp(status=429)
+    ), patch.object(fetch.time, "sleep") as sleep:
         with pytest.raises(RedditRateLimitError):
             fetch._get("https://old.reddit.com/r/x/hot.json", {})
 

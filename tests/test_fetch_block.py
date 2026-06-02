@@ -20,7 +20,9 @@ def _resp(status=200, text="", json_data=None):
 
 def test_403_raises_blocked():
     """A 403 is an IP block — raise loudly, never return None/0-posts."""
-    with patch.object(fetch.requests, "get", return_value=_resp(status=403, text="Forbidden")):
+    with patch.object(fetch, "get_limiter", return_value=Mock()), patch.object(
+        fetch.requests, "get", return_value=_resp(status=403, text="Forbidden")
+    ):
         with pytest.raises(RedditBlockedError):
             fetch._get("https://old.reddit.com/r/x/hot.json", {})
 
@@ -28,14 +30,16 @@ def test_403_raises_blocked():
 def test_block_page_body_raises():
     """A 200 whose body is Reddit's WAF block page is still a block."""
     body = "<html><head><title>Blocked</title></head>you've been blocked by network security</html>"
-    with patch.object(fetch.requests, "get", return_value=_resp(status=200, text=body)):
+    with patch.object(fetch, "get_limiter", return_value=Mock()), patch.object(
+        fetch.requests, "get", return_value=_resp(status=200, text=body)
+    ):
         with pytest.raises(RedditBlockedError):
             fetch._get("https://old.reddit.com/r/x/hot.json", {})
 
 
 def test_normal_json_returns_data_not_a_false_block():
     """A genuine JSON response must NOT be misread as a block."""
-    with patch.object(
+    with patch.object(fetch, "get_limiter", return_value=Mock()), patch.object(
         fetch.requests,
         "get",
         return_value=_resp(status=200, text='{"data": {"children": []}}', json_data={"data": {"children": []}}),

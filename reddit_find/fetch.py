@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 import requests
 
 from .errors import RedditBlockedError, RedditRateLimitError
+from .ratelimit import get_limiter
 
 HEADERS = {
     "User-Agent": "reddit-find/1.0 GTM research tool (github.com/LeadGrowGTM/reddit-find)"
@@ -87,8 +88,6 @@ def fetch_subreddit_posts(
 def fetch_post_comments(subreddit: str, post_id: str, limit: int = 25) -> List[Dict]:
     """Fetch top comments from a post."""
     url = f"{BASE_URL}/r/{subreddit}/comments/{post_id}.json"
-    time.sleep(2)
-
     raw = _get(url, {"limit": limit, "sort": "top"}, array_response=True)
     if not raw or len(raw) < 2:
         return []
@@ -129,7 +128,6 @@ def fetch_single_post(post_url_or_id: str, subreddit: Optional[str] = None) -> O
         # Try without subreddit path (Reddit redirects)
         url = f"{BASE_URL}/comments/{post_id}.json"
 
-    time.sleep(1)
     raw = _get(url, {"limit": 50, "sort": "top"}, array_response=True)
     if not raw or len(raw) < 2:
         return None
@@ -294,6 +292,7 @@ def _get(url: str, params: Dict, array_response: bool = False, max_retries: int 
     attempt = 0
     try:
         while True:
+            get_limiter().acquire()
             resp = requests.get(url, headers=HEADERS, params=params, timeout=15)
             _raise_if_blocked(resp)
             if resp.status_code == 429:

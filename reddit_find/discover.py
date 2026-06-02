@@ -5,6 +5,8 @@ import re
 import requests
 from typing import Dict, List, Optional
 
+from .ratelimit import get_limiter
+
 
 SERPER_URL = "https://google.serper.dev/search"
 REDDIT_SEARCH_URL = "https://old.reddit.com/search.json"
@@ -71,6 +73,7 @@ def find_subreddits(topic: str, serper_api_key: Optional[str] = None, num_result
 def _reddit_subreddit_search(topic: str, limit: int = 15) -> List[Dict]:
     """Search Reddit's own subreddit search API. No API key required."""
     try:
+        get_limiter().acquire()
         resp = requests.get(
             REDDIT_SEARCH_URL,
             headers=HEADERS,
