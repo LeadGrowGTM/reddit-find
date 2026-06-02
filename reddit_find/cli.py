@@ -17,7 +17,25 @@ from . import __version__
 from .discover import find_subreddits
 from .errors import RedditBlockedError, RedditRateLimitError
 from .fetch import fetch_post_comments, fetch_single_post, fetch_subreddit_posts, search_posts
-from .ratelimit import RateLimiter, get_limiter
+from .ratelimit import RateLimiter, current_limiter, init_limiter
+
+
+def _rate_option(f):
+    """Shared --max-per-minute option for every command that hits reddit.com."""
+    return click.option(
+        "--max-per-minute",
+        default=30,
+        show_default=True,
+        envvar="REDDIT_FIND_MAX_PER_MIN",
+        help="Max reddit.com requests per minute, enforced across runs. Default 30.",
+    )(f)
+
+
+def _setup_limiter(max_per_minute: int) -> RateLimiter:
+    """Initialize the shared limiter from the resolved budget and print pre-flight."""
+    limiter = init_limiter(max_per_minute)
+    _print_preflight(limiter)
+    return limiter
 
 
 def _print_preflight(limiter: RateLimiter) -> None:
@@ -56,9 +74,6 @@ class GuardrailGroup(click.Group):
     """
 
     def invoke(self, ctx):
-        limiter = get_limiter() if ctx.invoked_subcommand is not None else None
-        if limiter is not None:
-            _print_preflight(limiter)
         try:
             return super().invoke(ctx)
         except RedditBlockedError as e:
@@ -68,7 +83,10 @@ class GuardrailGroup(click.Group):
             click.echo(f"\nRATE LIMITED: {e}", err=True)
             ctx.exit(3)
         finally:
-            if limiter is not None:
+            # A command initializes the limiter via _setup_limiter; only print a
+            # summary if one was created and actually made requests.
+            limiter = current_limiter()
+            if limiter is not None and limiter.requests_this_run > 0:
                 _print_run_summary(limiter)
 
 
@@ -87,7 +105,8 @@ def cli():
 @click.argument("topic")
 @click.option("--serper-key", envvar="SERPER_API_KEY", default=None, help="SerperDev API key (optional, improves discovery)")
 @click.option("--top", default=8, show_default=True, help="Number of subreddits to return")
-def discover(topic: str, serper_key: Optional[str], top: int):
+@_rate_option
+def discover(topic: str, serper_key: Optional[str], top: int, max_per_minute: int):
     """Find relevant subreddits for a GTM topic.
 
     TOPIC: The topic or ICP problem to research (e.g. "b2b cold email")
@@ -95,6 +114,7 @@ def discover(topic: str, serper_key: Optional[str], top: int):
     Uses Reddit's native subreddit search by default. Pass SERPER_API_KEY
     for enhanced discovery via Google.
     """
+    _setup_limiter(max_per_minute)
     click.echo(f"Searching for subreddits: {topic}\n")
     subreddits = find_subreddits(topic, serper_api_key=serper_key, num_results=top)
 
@@ -123,6 +143,7 @@ def discover(topic: str, serper_key: Optional[str], top: int):
 @click.option("--max-age-days", default=365, show_default=True, help="Filter posts older than N days (default: 365). Use 90 for 'recent', 7 for 'this week'.")
 @click.option("--titles-only", is_flag=True, default=False, help="Skip comments — return post titles, scores, dates, and URLs only. Fast scan to decide which posts to deep-dive.")
 @click.option("--output", "-o", default=None, help="Save output to file (default: stdout)")
+@_rate_option
 def fetch(
     topic: str,
     serper_key: Optional[str],
@@ -133,6 +154,7 @@ def fetch(
     max_age_days: int,
     titles_only: bool,
     output: Optional[str],
+    max_per_minute: int,
 ):
     """Fetch Reddit threads and output structured markdown for analysis.
 
@@ -147,6 +169,7 @@ def fetch(
       reddit-find fetch "b2b cold email" -s sales --min-score 20 --max-age-days 365 -o research.md
       reddit-find fetch "SaaS churn" -s CustomerSuccess -s churnzero -o churn.md
     """
+    _setup_limiter(max_per_minute)
     # Step 1: Determine subreddits
     if subreddit:
         target_subs = list(subreddit)
@@ -207,7 +230,8 @@ def fetch(
 @click.argument("post_ref")
 @click.option("--sub", default=None, help="Subreddit name (required when passing a bare post ID, optional for full URLs)")
 @click.option("--output", "-o", default=None, help="Save output to file (default: stdout)")
-def post(post_ref: str, sub: Optional[str], output: Optional[str]):
+@_rate_option
+def post(post_ref: str, sub: Optional[str], output: Optional[str], max_per_minute: int):
     """Fetch a single post + ALL its comments for deep analysis.
 
     POST_REF: Full Reddit URL or bare post ID (e.g. 1abc23)
@@ -219,6 +243,7 @@ def post(post_ref: str, sub: Optional[str], output: Optional[str]):
       reddit-find post https://reddit.com/r/sales/comments/1abc23/title/ -o post.md
       reddit-find post 1abc23 --sub sales -o post.md
     """
+    _setup_limiter(max_per_minute)
     click.echo(f"Fetching post: {post_ref}", err=True)
     result = fetch_single_post(post_ref, subreddit=sub)
 
@@ -247,6 +272,7 @@ def post(post_ref: str, sub: Optional[str], output: Optional[str]):
 @click.option("--sort", default="relevance", show_default=True, type=click.Choice(["relevance", "top", "new", "comments"]), help="Reddit search sort order")
 @click.option("--titles-only", is_flag=True, default=False, help="Return titles/scores/URLs only. Fast scan — feed high-signal URLs to `reddit-find post`.")
 @click.option("--output", "-o", default=None, help="Save output to file (default: stdout)")
+@_rate_option
 def search(
     query: str,
     subreddit: tuple,
@@ -256,6 +282,7 @@ def search(
     sort: str,
     titles_only: bool,
     output: Optional[str],
+    max_per_minute: int,
 ):
     """Search Reddit for posts matching a keyword query.
 
@@ -271,6 +298,7 @@ def search(
       reddit-find search "MCA debt" -s smallbusiness -s Entrepreneur --max-age-days 730
       reddit-find search "cold email is dead" --sort top --limit 50 --titles-only
     """
+    _setup_limiter(max_per_minute)
     scope = f"r/{', r/'.join(subreddit)}" if subreddit else "all of Reddit"
     click.echo(f"Searching {scope} for: {query}", err=True)
 

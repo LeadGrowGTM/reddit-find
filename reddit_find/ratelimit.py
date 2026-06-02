@@ -141,3 +141,21 @@ def get_limiter() -> RateLimiter:
     if _shared_limiter is None:
         _shared_limiter = RateLimiter(state_path=str(default_state_path()))
     return _shared_limiter
+
+
+def init_limiter(max_per_minute: int) -> RateLimiter:
+    """(Re)create the shared limiter with an explicit budget, then return it.
+
+    Called by the CLI once the --max-per-minute flag / env var is resolved, so
+    the budget is set before the first request and before the pre-flight note.
+    """
+    global _shared_limiter
+    _shared_limiter = RateLimiter(
+        max_per_minute=max_per_minute, state_path=str(default_state_path())
+    )
+    return _shared_limiter
+
+
+def current_limiter() -> Optional[RateLimiter]:
+    """Return the shared limiter if one exists, else None (never creates one)."""
+    return _shared_limiter
