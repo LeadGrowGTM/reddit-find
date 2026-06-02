@@ -78,3 +78,28 @@ def test_old_timestamps_pruned_on_load(tmp_path):
 
     data = json.loads(state.read_text())
     assert data["timestamps"] == [10_000.0], "ancient timestamps should be pruned"
+
+
+def test_requests_in_window_counts_persisted_requests(tmp_path):
+    """The window count reflects requests across runs (feeds the preflight)."""
+    state = tmp_path / "ratelimit.json"
+    now, sleep, _ = _fake_clock()
+    limiter = RateLimiter(max_per_minute=60, state_path=str(state), time_fn=now, sleep_fn=sleep)
+
+    limiter.acquire()
+    limiter.acquire()
+
+    assert limiter.requests_in_window() == 2
+
+
+def test_tracks_requests_and_waits_for_this_run(tmp_path):
+    """Per-run counters drive the end-of-run summary."""
+    state = tmp_path / "ratelimit.json"
+    now, sleep, _ = _fake_clock()
+    limiter = RateLimiter(max_per_minute=60, state_path=str(state), time_fn=now, sleep_fn=sleep)
+
+    limiter.acquire()  # empty budget -> no wait
+    limiter.acquire()  # paced -> one wait
+
+    assert limiter.requests_this_run == 2
+    assert limiter.waited_this_run == 1

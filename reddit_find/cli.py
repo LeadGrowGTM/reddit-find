@@ -17,6 +17,33 @@ from . import __version__
 from .discover import find_subreddits
 from .errors import RedditBlockedError, RedditRateLimitError
 from .fetch import fetch_post_comments, fetch_single_post, fetch_subreddit_posts, search_posts
+from .ratelimit import RateLimiter, get_limiter
+
+
+def _print_preflight(limiter: RateLimiter) -> None:
+    """Show the rate budget and how much is already used (stderr)."""
+    click.echo(
+        f"rate limit: {limiter.max_per_minute} req/min budget — "
+        f"{limiter.requests_in_window()} request(s) used in the last 60s",
+        err=True,
+    )
+
+
+def _print_run_summary(limiter: RateLimiter) -> None:
+    """Summarize budget usage after the run (stderr)."""
+    budget = limiter.max_per_minute
+    used = limiter.requests_in_window()
+    click.echo(
+        f"rate limit summary: {limiter.requests_this_run} request(s) this run — "
+        f"{used}/{budget} used in window — {limiter.waited_this_run} pacing wait(s)",
+        err=True,
+    )
+    if budget and used / budget >= 0.8:
+        click.echo(
+            f"WARNING: at {round(100 * used / budget)}% of the per-minute budget — "
+            "slow down (--max-per-minute) to avoid a block.",
+            err=True,
+        )
 
 
 class GuardrailGroup(click.Group):
@@ -24,10 +51,14 @@ class GuardrailGroup(click.Group):
 
     A genuine empty result still flows through each command's own
     ``sys.exit(1)`` path, so an IP block (exit 2) and a rate limit (exit 3)
-    are visibly different from "no results found".
+    are visibly different from "no results found". Wraps every command with a
+    pre-flight budget note and an end-of-run usage summary.
     """
 
     def invoke(self, ctx):
+        limiter = get_limiter() if ctx.invoked_subcommand is not None else None
+        if limiter is not None:
+            _print_preflight(limiter)
         try:
             return super().invoke(ctx)
         except RedditBlockedError as e:
@@ -36,6 +67,9 @@ class GuardrailGroup(click.Group):
         except RedditRateLimitError as e:
             click.echo(f"\nRATE LIMITED: {e}", err=True)
             ctx.exit(3)
+        finally:
+            if limiter is not None:
+                _print_run_summary(limiter)
 
 
 @click.group(cls=GuardrailGroup)

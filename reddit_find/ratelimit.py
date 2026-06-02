@@ -65,6 +65,8 @@ class RateLimiter:
         self._sleep = sleep_fn
         self._lock = threading.Lock()
         self._timestamps: List[float] = self._load_state()
+        self.requests_this_run = 0
+        self.waited_this_run = 0
 
     def acquire(self) -> None:
         """Block until a token is available, then record its consumption."""
@@ -77,8 +79,17 @@ class RateLimiter:
             self._timestamps.append(consumed_at)
             self._prune(consumed_at)
             self._save_state()
+            self.requests_this_run += 1
+            if wait > 0:
+                self.waited_this_run += 1
         if wait > 0:
             self._sleep(wait)
+
+    def requests_in_window(self) -> int:
+        """How many requests fall inside the current rolling window (incl. prior runs)."""
+        with self._lock:
+            self._prune(self._time())
+            return len(self._timestamps)
 
     # -- internal --------------------------------------------------------
 
