@@ -1,5 +1,6 @@
 """Reddit JSON API fetching — posts and comments, no auth required."""
 
+import random
 import re
 import time
 from datetime import datetime, timezone
@@ -7,10 +8,30 @@ from typing import Dict, List, Optional
 
 import requests
 
+from .errors import RedditBlockedError, RedditRateLimitError
+from .ratelimit import get_limiter
+
 HEADERS = {
     "User-Agent": "reddit-find/1.0 GTM research tool (github.com/LeadGrowGTM/reddit-find)"
 }
 BASE_URL = "https://old.reddit.com"
+
+# Markers seen on Reddit's WAF block page. Matched case-insensitively against
+# the response body. Kept apostrophe-free so HTML entity encoding can't dodge it.
+_BLOCK_MARKERS = ("blocked by network security", "<title>blocked</title>")
+
+
+def _raise_if_blocked(resp) -> None:
+    """Raise RedditBlockedError if the response is a 403 or a WAF block page."""
+    blocked = resp.status_code == 403
+    if not blocked:
+        body = (resp.text or "").lower()
+        blocked = any(marker in body for marker in _BLOCK_MARKERS)
+    if blocked:
+        raise RedditBlockedError(
+            "Reddit has blocked this IP (rate-limit/WAF). Wait it out, switch "
+            "networks/VPN, or use the RapidAPI fallback (separate feature)."
+        )
 
 
 def fetch_subreddit_posts(
@@ -67,8 +88,6 @@ def fetch_subreddit_posts(
 def fetch_post_comments(subreddit: str, post_id: str, limit: int = 25) -> List[Dict]:
     """Fetch top comments from a post."""
     url = f"{BASE_URL}/r/{subreddit}/comments/{post_id}.json"
-    time.sleep(2)
-
     raw = _get(url, {"limit": limit, "sort": "top"}, array_response=True)
     if not raw or len(raw) < 2:
         return []
@@ -109,7 +128,6 @@ def fetch_single_post(post_url_or_id: str, subreddit: Optional[str] = None) -> O
         # Try without subreddit path (Reddit redirects)
         url = f"{BASE_URL}/comments/{post_id}.json"
 
-    time.sleep(1)
     raw = _get(url, {"limit": 50, "sort": "top"}, array_response=True)
     if not raw or len(raw) < 2:
         return None
@@ -262,15 +280,34 @@ def _parse_post_ref(ref: str, subreddit: Optional[str] = None):
     return subreddit, None
 
 
-def _get(url: str, params: Dict, array_response: bool = False, retry: bool = True):
+_BACKOFF_SCHEDULE = (5, 15, 45)  # seconds before each successive 429 retry
+
+
+def _jittered(seconds: float) -> float:
+    """Apply ±20% random jitter so retries don't hit Reddit metronomically."""
+    return seconds * random.uniform(0.8, 1.2)
+
+
+def _get(url: str, params: Dict, array_response: bool = False, max_retries: int = 3):
+    attempt = 0
     try:
-        resp = requests.get(url, headers=HEADERS, params=params, timeout=15)
-        if resp.status_code == 429:
-            if retry:
-                time.sleep(15)
-                return _get(url, params, array_response, retry=False)
-            return None
-        resp.raise_for_status()
-        return resp.json()
+        while True:
+            get_limiter().acquire()
+            resp = requests.get(url, headers=HEADERS, params=params, timeout=15)
+            _raise_if_blocked(resp)
+            if resp.status_code == 429:
+                if attempt >= max_retries:
+                    raise RedditRateLimitError(
+                        f"Reddit rate-limited this IP (HTTP 429) after {max_retries} "
+                        "backoff retries. Slow down (--max-per-minute) or wait before retrying."
+                    )
+                base = _BACKOFF_SCHEDULE[min(attempt, len(_BACKOFF_SCHEDULE) - 1)]
+                time.sleep(_jittered(base))
+                attempt += 1
+                continue
+            resp.raise_for_status()
+            return resp.json()
+    except (RedditBlockedError, RedditRateLimitError):
+        raise
     except Exception:
         return None
