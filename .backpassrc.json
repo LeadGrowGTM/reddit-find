@@ -1,0 +1,15 @@
+{
+  "memoryFiles": [
+    "AGENTS.md"
+  ],
+  "skillsDir": ".agents/skills",
+  "budgetTokens": 5000,
+  "minGapEvidence": 2,
+  "discovery": {
+    "harnesses": [
+      "claude",
+      "codex"
+    ],
+    "since": "30d"
+  }
+}
